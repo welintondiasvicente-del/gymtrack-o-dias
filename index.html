@@ -1017,6 +1017,9 @@ const Storage = {
     this._set(STORAGE_KEYS.WEIGHTS, list);
     return list;
   },
+  setWeights(list) {
+    return this._set(STORAGE_KEYS.WEIGHTS, list);
+  },
   getLatestWeight() {
     const list = this.getWeights();
     if (!list.length) return null;
@@ -2650,7 +2653,21 @@ const App = {
     }
     errEl.textContent = '';
 
+    const oldUser = Storage.getUser();
     Storage.saveUser({ name, age, height, weightInitial, weightGoal, objective });
+
+    // Mantém a "Peso inicial" do perfil sincronizada com o primeiro registro de
+    // peso (usado nos gráficos e no "peso atual"), senão eles ficam dessincronizados.
+    if (oldUser.weightInitial !== weightInitial) {
+      const weights = Storage.getWeights();
+      if (weights.length) {
+        weights[0] = { ...weights[0], weight: weightInitial };
+        Storage.setWeights(weights);
+      } else {
+        Storage.addWeight(weightInitial);
+      }
+    }
+
     this.closeEditProfile();
     this.renderSettings();
     this.renderHome();
@@ -2931,8 +2948,13 @@ function bindInstallButton() {
   });
 }
 
-// Registro do service worker desativado nesta versão de teste (arquivo único).
-// Ative novamente ao hospedar junto com service-worker.js e manifest.json.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(err => {
+      console.error('Falha ao registrar service worker:', err);
+    });
+  });
+}
 
 document.addEventListener('DOMContentLoaded', bindInstallButton);
 
