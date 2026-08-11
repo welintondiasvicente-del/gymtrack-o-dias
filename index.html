@@ -319,6 +319,9 @@ input {
 .exercise-error { color: var(--alert); font-size: 13px; margin: 8px 0; min-height: 16px; }
 
 .workout-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.exercise-nav-row { display: flex; gap: 10px; }
+.exercise-nav-row button { flex: 1; }
+.exercise-nav-row button:disabled { opacity: 0.4; pointer-events: none; }
 
 .timer-inline { display: flex; gap: 10px; margin-top: 20px; }
 .timer-btn {
@@ -656,8 +659,11 @@ select#loadChartSelect {
         <div id="setsContainer"></div>
         <p class="exercise-error" id="exerciseError"></p>
         <div class="workout-actions">
+          <div class="exercise-nav-row">
+            <button class="btn-secondary" id="exPrevBtn">◀ Anterior</button>
+            <button class="btn-secondary" id="exSkipBtn">Próximo ▶</button>
+          </div>
           <button class="btn-primary" id="exSaveBtn">Salvar exercício</button>
-          <button class="btn-secondary" id="exSkipBtn">Próximo exercício</button>
         </div>
       </div>
       <div class="timer-inline">
@@ -739,6 +745,12 @@ select#loadChartSelect {
     <div class="settings-group">
       <div class="settings-group-title">Segurança</div>
       <button class="settings-item" id="changePinBtn"><span>Alterar PIN</span><span class="chevron">›</span></button>
+    </div>
+
+    <div class="settings-group">
+      <div class="settings-group-title">Instalação</div>
+      <button class="settings-item" id="installAppSettingsBtn"><span>Instalar app</span><span class="chevron">📲</span></button>
+      <button class="settings-item" id="downloadAppCopyBtn"><span>Baixar cópia do app (HTML)</span><span class="chevron">↓</span></button>
     </div>
 
     <div class="settings-group">
@@ -1855,6 +1867,7 @@ const App = {
     document.getElementById('weightModalOverlay').addEventListener('click', () => this.closeWeightModal());
 
     document.getElementById('exSaveBtn').addEventListener('click', () => this.saveCurrentExercise());
+    document.getElementById('exPrevBtn').addEventListener('click', () => this.previousExercise());
     document.getElementById('exSkipBtn').addEventListener('click', () => this.nextExercise());
     document.getElementById('workoutExitBtn').addEventListener('click', () => this.confirmExitWorkout());
 
@@ -2205,18 +2218,22 @@ const App = {
     const setsContainer = document.getElementById('setsContainer');
     setsContainer.innerHTML = '';
     for (let i = 0; i < ex.def.sets; i++) {
+      const savedSet = ex.sets[i];
+      const loadVal = savedSet ? savedSet.load : suggested;
+      const repsVal = savedSet ? savedSet.reps : '';
       const row = document.createElement('div');
       row.className = 'set-row';
       row.innerHTML = `
         <span class="set-label">Série ${i + 1}</span>
-        <input type="number" inputmode="decimal" class="set-input" data-field="load" data-index="${i}" placeholder="${isPerSide ? 'Carga por lado' : 'Carga (kg)'}" value="${suggested || ''}">
-        <input type="number" inputmode="numeric" class="set-input" data-field="reps" data-index="${i}" placeholder="Reps">
+        <input type="number" inputmode="decimal" class="set-input" data-field="load" data-index="${i}" placeholder="${isPerSide ? 'Carga por lado' : 'Carga (kg)'}" value="${loadVal || ''}">
+        <input type="number" inputmode="numeric" class="set-input" data-field="reps" data-index="${i}" placeholder="Reps" value="${repsVal || ''}">
       `;
       setsContainer.appendChild(row);
     }
 
     const isLast = session.exerciseIndex === session.exercises.length - 1;
     document.getElementById('exSaveBtn').textContent = isLast ? 'Concluir treino' : 'Salvar exercício';
+    document.getElementById('exPrevBtn').disabled = session.exerciseIndex === 0;
   },
 
   collectCurrentSets() {
@@ -2251,6 +2268,14 @@ const App = {
       this.finishWorkout();
     } else {
       this.nextExercise();
+    }
+  },
+
+  previousExercise() {
+    const session = this.workoutSession;
+    if (session.exerciseIndex > 0) {
+      session.exerciseIndex--;
+      this.renderCurrentExercise();
     }
   },
 
@@ -2936,16 +2961,48 @@ window.addEventListener('appinstalled', () => {
   if (btn) btn.classList.add('hidden');
 });
 
+async function triggerInstallPrompt() {
+  if (!deferredInstallPrompt) {
+    alert('Seu navegador já instalou o app, ou não oferece esse recurso aqui. No Chrome, use o menu ⋮ e toque em "Adicionar à tela inicial" ou "Instalar app".');
+    return;
+  }
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  const btn = document.getElementById('installBtn');
+  if (btn) btn.classList.add('hidden');
+}
+
 function bindInstallButton() {
   const btn = document.getElementById('installBtn');
-  if (!btn) return;
-  btn.addEventListener('click', async () => {
-    if (!deferredInstallPrompt) return;
-    deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice;
-    deferredInstallPrompt = null;
-    btn.classList.add('hidden');
-  });
+  if (btn) btn.addEventListener('click', triggerInstallPrompt);
+  const settingsBtn = document.getElementById('installAppSettingsBtn');
+  if (settingsBtn) settingsBtn.addEventListener('click', triggerInstallPrompt);
+}
+
+/* Baixa uma cópia autossuficiente do HTML atual da página (backup do app). */
+function downloadAppCopy() {
+  try {
+    const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `gymtrack-o-dias-copia-${stamp}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error('Falha ao gerar cópia do app:', err);
+    alert('Não foi possível gerar a cópia neste navegador.');
+  }
+}
+
+function bindDownloadCopyButton() {
+  const btn = document.getElementById('downloadAppCopyBtn');
+  if (btn) btn.addEventListener('click', downloadAppCopy);
 }
 
 if ('serviceWorker' in navigator) {
@@ -2956,7 +3013,10 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-document.addEventListener('DOMContentLoaded', bindInstallButton);
+document.addEventListener('DOMContentLoaded', () => {
+  bindInstallButton();
+  bindDownloadCopyButton();
+});
 
 
 (function(){
