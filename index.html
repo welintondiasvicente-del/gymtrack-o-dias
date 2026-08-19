@@ -175,6 +175,14 @@ input {
 .greeting-block p { color: var(--text-secondary); font-size: 14px; margin-top: 4px; }
 
 .today-card { display: flex; flex-direction: column; gap: 14px; }
+.resume-banner {
+  display: flex; flex-direction: column; gap: 12px;
+  border-color: rgba(37,99,235,0.4);
+  background: linear-gradient(135deg, rgba(37,99,235,0.16), rgba(37,99,235,0.05));
+}
+.resume-banner-text { display: flex; flex-direction: column; gap: 3px; }
+.resume-banner-title { font-weight: 700; font-size: 14.5px; }
+.resume-banner-sub { color: var(--text-secondary); font-size: 12.5px; }
 .today-card-top { display: flex; justify-content: space-between; align-items: center; }
 .btn-primary {
   background: var(--blue);
@@ -286,6 +294,14 @@ input {
 .workout-progress-left { display: flex; align-items: center; gap: 8px; }
 .tab-logo-sm { width: 22px; height: auto; flex-shrink: 0; }
 .workout-progress span { color: var(--text-secondary); font-size: 13px; }
+.workout-elapsed-row {
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 10px 16px; margin-bottom: 16px;
+}
+.workout-elapsed-icon { font-size: 15px; }
+.workout-elapsed-row #workoutElapsedTime { color: var(--text); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.workout-elapsed-caption { color: var(--text-secondary); font-size: 12px; }
 .icon-btn { color: var(--text-secondary); font-size: 20px; padding: 6px; }
 
 .exercise-card h3 { font-size: 20px; margin-bottom: 4px; }
@@ -565,6 +581,14 @@ select#loadChartSelect {
       </div>
     </div>
 
+    <div class="card resume-banner hidden" id="resumeBanner">
+      <div class="resume-banner-text">
+        <span class="resume-banner-title">⏱ Treino em andamento</span>
+        <span class="resume-banner-sub" id="resumeBannerSub">Exercício 1 de 8 · 0min</span>
+      </div>
+      <button class="btn-primary" id="resumeWorkoutBtn">Continuar treino</button>
+    </div>
+
     <div class="card today-card">
       <div class="today-card-top">
         <div>
@@ -647,6 +671,11 @@ select#loadChartSelect {
           <span id="workoutProgressLabel">Exercício 1 de 8</span>
         </div>
         <button class="icon-btn" id="workoutExitBtn">✕</button>
+      </div>
+      <div class="workout-elapsed-row">
+        <span class="workout-elapsed-icon">⏱</span>
+        <span id="workoutElapsedTime">0min 00s</span>
+        <span class="workout-elapsed-caption">tempo de treino</span>
       </div>
       <div class="card exercise-card">
         <div class="exercise-header-row">
@@ -918,6 +947,7 @@ const STORAGE_KEYS = {
   SETTINGS: 'gymtrack_settings',
   LOAD_STATE: 'gymtrack_load_state', // última carga usada por exercício
   WORKOUTS_CUSTOM: 'gymtrack_workouts_custom', // treinos editados pelo usuário
+  ACTIVE_SESSION: 'gymtrack_active_session', // treino em andamento (para retomar)
   SESSION: 'gymtrack_session' // sessão de login em andamento (sessionStorage)
 };
 
@@ -1092,6 +1122,17 @@ const Storage = {
     const all = this.getWorkoutsCustom();
     delete all[workoutKey];
     return this._set(STORAGE_KEYS.WORKOUTS_CUSTOM, all);
+  },
+
+  /* ---------- Treino em andamento (retomar depois de sair do site) ---------- */
+  getActiveSession() {
+    return this._get(STORAGE_KEYS.ACTIVE_SESSION, null);
+  },
+  saveActiveSession(session) {
+    return this._set(STORAGE_KEYS.ACTIVE_SESSION, session);
+  },
+  clearActiveSession() {
+    localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
   },
 
   /* ---------- Configurações ---------- */
@@ -1832,6 +1873,8 @@ const App = {
   init() {
     Storage.initDefaultsIfNeeded();
     this.applyRestTimerButtons();
+    const savedSession = Storage.getActiveSession();
+    if (savedSession) this.workoutSession = savedSession;
     if (Storage.hasPin() && Storage.isUnlocked()) {
       this.onAuthSuccess(true);
     } else {
@@ -1854,6 +1897,7 @@ const App = {
     });
 
     document.getElementById('startWorkoutBtn').addEventListener('click', () => this.startWorkout());
+    document.getElementById('resumeWorkoutBtn').addEventListener('click', () => this.goTo('workout'));
     document.getElementById('chooseWorkoutBtn').addEventListener('click', () => this.goTo('workout'));
     document.getElementById('workoutPickerButtons').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-workout]');
@@ -1941,7 +1985,17 @@ const App = {
     if (tab === 'history') this.renderHistory();
     if (tab === 'charts') this.renderCharts();
     if (tab === 'settings') this.renderSettings();
-    if (tab === 'workout' && !this.workoutSession) this.renderWorkoutIntro();
+    if (tab === 'workout') {
+      if (this.workoutSession) {
+        document.getElementById('workoutIntro').classList.add('hidden');
+        document.getElementById('workoutSummary').classList.add('hidden');
+        document.getElementById('workoutActive').classList.remove('hidden');
+        this.renderCurrentExercise();
+        this.startWorkoutElapsedTimer();
+      } else {
+        this.renderWorkoutIntro();
+      }
+    }
   },
 
   /* ---------------- HOME / DASHBOARD ---------------- */
@@ -1959,6 +2013,17 @@ const App = {
     document.getElementById('todayWorkoutName').textContent = today.key === 'REST' ? 'Descanso' : today.name;
     document.getElementById('startWorkoutBtn').classList.toggle('hidden', today.key === 'REST');
     document.getElementById('restMessage').classList.toggle('hidden', today.key !== 'REST');
+
+    const resumeBanner = document.getElementById('resumeBanner');
+    if (this.workoutSession) {
+      resumeBanner.classList.remove('hidden');
+      const s = this.workoutSession;
+      const elapsedSecs = Math.max(0, Math.round((Date.now() - s.startedAt) / 1000));
+      document.getElementById('resumeBannerSub').textContent =
+        `${this.workoutDisplayName(s.workoutKey)} · Exercício ${s.exerciseIndex + 1} de ${s.exercises.length} · ${formatDuration(elapsedSecs)}`;
+    } else {
+      resumeBanner.classList.add('hidden');
+    }
 
     const latestWeight = Storage.getLatestWeight();
     const currentWeight = latestWeight ? latestWeight.weight : user.weightInitial;
@@ -2181,11 +2246,12 @@ const App = {
       exerciseIndex: 0,
       exercises: today.exercises.map(ex => ({ id: ex.id, name: ex.name, def: ex, sets: [] }))
     };
+    this.persistSession();
     this.goTo('workout');
-    document.getElementById('workoutIntro').classList.add('hidden');
-    document.getElementById('workoutSummary').classList.add('hidden');
-    document.getElementById('workoutActive').classList.remove('hidden');
-    this.renderCurrentExercise();
+  },
+
+  persistSession() {
+    if (this.workoutSession) Storage.saveActiveSession(this.workoutSession);
   },
 
   renderCurrentExercise() {
@@ -2263,6 +2329,7 @@ const App = {
     ex.sets = sets;
     const maxLoad = Math.max(...sets.map(s => s.load));
     Storage.setExerciseLoad(WorkoutsAPI.exerciseKey(session.workoutKey, ex.id), maxLoad);
+    this.persistSession();
 
     if (session.exerciseIndex === session.exercises.length - 1) {
       this.finishWorkout();
@@ -2275,6 +2342,7 @@ const App = {
     const session = this.workoutSession;
     if (session.exerciseIndex > 0) {
       session.exerciseIndex--;
+      this.persistSession();
       this.renderCurrentExercise();
     }
   },
@@ -2283,6 +2351,7 @@ const App = {
     const session = this.workoutSession;
     if (session.exerciseIndex < session.exercises.length - 1) {
       session.exerciseIndex++;
+      this.persistSession();
       this.renderCurrentExercise();
     } else {
       this.finishWorkout();
@@ -2291,6 +2360,8 @@ const App = {
 
   finishWorkout() {
     const session = this.workoutSession;
+    this.stopWorkoutElapsedTimer();
+    Storage.clearActiveSession();
     const durationSeconds = Math.round((Date.now() - session.startedAt) / 1000);
     let volumeTotal = 0;
     const exercisesLog = session.exercises.map(ex => {
@@ -2351,14 +2422,33 @@ const App = {
   },
 
   confirmExitWorkout() {
-    if (confirm('Sair do treino em andamento? O progresso não será salvo.')) {
+    if (confirm('Sair do treino em andamento? O progresso registrado até aqui será perdido (se só quiser pausar, use o botão Início ou feche o navegador — o treino continua salvo).')) {
       this.workoutSession = null;
+      Storage.clearActiveSession();
+      this.stopWorkoutElapsedTimer();
       this.cancelTimer();
       this.goTo('home');
     }
   },
 
   /* ---------------- CRONÔMETRO ---------------- */
+  startWorkoutElapsedTimer() {
+    this.stopWorkoutElapsedTimer();
+    const update = () => {
+      if (!this.workoutSession) return;
+      const el = document.getElementById('workoutElapsedTime');
+      if (!el) return;
+      const secs = Math.max(0, Math.round((Date.now() - this.workoutSession.startedAt) / 1000));
+      el.textContent = formatDuration(secs);
+    };
+    update();
+    this.workoutElapsedInterval = setInterval(update, 1000);
+  },
+  stopWorkoutElapsedTimer() {
+    if (this.workoutElapsedInterval) clearInterval(this.workoutElapsedInterval);
+    this.workoutElapsedInterval = null;
+  },
+
   applyRestTimerButtons() {
     const timers = Storage.getRestTimers();
     document.querySelectorAll('.timer-btn').forEach((btn, i) => {
